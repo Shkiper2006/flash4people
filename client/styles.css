@@ -180,6 +180,19 @@ body {
   gap: 10px;
 }
 
+.room-create {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.room-create input {
+  flex: 1;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid #d6dbe6;
+}
+
 .room {
   background: #f5f7fc;
   border: none;
@@ -209,6 +222,7 @@ body {
   justify-content: space-between;
   align-items: center;
   background: #f9fafc;
+  gap: 8px;
 }
 
 .user.online .nickname {
@@ -223,6 +237,11 @@ body {
 
 .user.offline .nickname {
   color: #9aa3af;
+}
+
+.invite-button {
+  padding: 6px 10px;
+  font-weight: 700;
 }
 
 .content {
@@ -423,6 +442,50 @@ body {
   padding: 12px 14px;
   border-radius: 12px;
   border: 1px solid #d6dbe6;
+}
+
+.attachments {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.attachment {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #f5f7fc;
+  border-radius: 10px;
+  padding: 8px 12px;
+}
+
+.emoji-panel {
+  margin-top: -4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 12px;
+  border-radius: 12px;
+  background: #f8f9ff;
+  border: 1px solid #e5e9f2;
+}
+
+.emoji-panel button {
+  border: none;
+  background: white;
+  border-radius: 8px;
+  padding: 6px;
+  cursor: pointer;
+}
+
+.message-file {
+  margin-top: 8px;
+}
+
+.message-file img {
+  max-width: 240px;
+  border-radius: 10px;
+  display: block;
 }
 
 .muted {
