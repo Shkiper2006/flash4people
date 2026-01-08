@@ -10,6 +10,7 @@ const DEFAULT_DATA = {
   rooms: [],
   messages: [],
   invites: [],
+  files: [],
 };
 
 class Database {
@@ -65,6 +66,14 @@ class Database {
     return this.data.users.find((user) => user.id === userId) || null;
   }
 
+  getUserByUsername(username) {
+    return this.data.users.find((user) => user.username === username) || null;
+  }
+
+  listUsers() {
+    return [...this.data.users];
+  }
+
   createSession(userId) {
     const token = crypto.randomUUID();
     this.data.sessions[token] = {
@@ -88,6 +97,18 @@ class Database {
     return this.data.rooms.filter((room) => room.ownerId === ownerId);
   }
 
+  listRoomsForUser(userId) {
+    return this.data.rooms.filter((room) => {
+      if (room.ownerId === userId) {
+        return true;
+      }
+      if (Array.isArray(room.members)) {
+        return room.members.includes(userId);
+      }
+      return false;
+    });
+  }
+
   getRoom(roomId) {
     return this.data.rooms.find((room) => room.id === roomId) || null;
   }
@@ -97,6 +118,7 @@ class Database {
       id: crypto.randomUUID(),
       name,
       ownerId,
+      members: [ownerId],
       createdAt: new Date().toISOString(),
     };
     this.data.rooms.push(room);
@@ -115,6 +137,46 @@ class Database {
     return room;
   }
 
+  addRoomMember(roomId, userId) {
+    const room = this.getRoom(roomId);
+    if (!room) {
+      return null;
+    }
+    room.members = Array.isArray(room.members) ? room.members : [];
+    if (!room.members.includes(userId)) {
+      room.members.push(userId);
+      room.updatedAt = new Date().toISOString();
+      this.save();
+    }
+    return room;
+  }
+
+  isRoomMember(roomId, userId) {
+    const room = this.getRoom(roomId);
+    if (!room) {
+      return false;
+    }
+    if (room.ownerId === userId) {
+      return true;
+    }
+    if (!Array.isArray(room.members)) {
+      return false;
+    }
+    return room.members.includes(userId);
+  }
+
+  listRoomMembers(roomId) {
+    const room = this.getRoom(roomId);
+    if (!room) {
+      return [];
+    }
+    const members = Array.isArray(room.members) ? room.members : [];
+    if (!members.includes(room.ownerId)) {
+      return [room.ownerId, ...members];
+    }
+    return [...members];
+  }
+
   deleteRoom(roomId) {
     this.data.rooms = this.data.rooms.filter((room) => room.id !== roomId);
     this.data.messages = this.data.messages.filter((msg) => msg.roomId !== roomId);
@@ -122,15 +184,14 @@ class Database {
     this.save();
   }
 
-  addMessage({ roomId, fromUserId, type, text, fileName, fileData }) {
+  addMessage({ roomId, fromUserId, type, text, file }) {
     const message = {
       id: crypto.randomUUID(),
       roomId,
       fromUserId,
       type,
       text: text || null,
-      fileName: fileName || null,
-      fileData: fileData || null,
+      file: file || null,
       createdAt: new Date().toISOString(),
     };
     this.data.messages.push(message);
