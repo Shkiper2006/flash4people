@@ -4,6 +4,7 @@ const http = require('http');
 const Database = require('./db');
 const { attachFileRoutes } = require('./files');
 const { attachWebSocketServer } = require('./ws');
+const { attachSignalingServer } = require('./signaling');
 
 const app = express();
 const server = http.createServer(app);
@@ -121,6 +122,7 @@ app.delete('/api/rooms/:id', authMiddleware, (req, res) => {
 });
 
 attachWebSocketServer({ server, db });
+attachSignalingServer({ server });
 
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
