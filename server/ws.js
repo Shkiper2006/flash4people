@@ -101,21 +101,6 @@ function broadcastMessageToRoom(db, roomId, payload) {
 function attachWebSocketServer({ server, db }) {
   const wss = new WebSocket.Server({ server, path: '/ws' });
 
-  function finalizeAuth(user, ws) {
-    if (!user) return;
-    if (connectionInfo.has(ws)) {
-      return;
-    }
-    registerConnection(user.id, ws);
-    send(ws, {
-      type: 'auth_ok',
-      user: { id: user.id, nickname: user.username },
-      rooms: listRoomsForUser(db, user.id),
-      users: listUsersWithStatus(db),
-    });
-    broadcastUsersUpdate(db);
-  }
-
   db.listPendingInvites().forEach((invite) => {
     const expiresAtMs = new Date(invite.expiresAt).getTime();
     if (expiresAtMs <= Date.now()) {
@@ -132,25 +117,7 @@ function attachWebSocketServer({ server, db }) {
     });
   });
 
-  wss.on('connection', (ws, request) => {
-    const url = new URL(request.url, `http://${request.headers.host}`);
-    const token = url.searchParams.get('token');
-    if (token) {
-      const session = db.getSession(token);
-      if (!session) {
-        send(ws, { type: 'error', message: 'Неверная сессия.' });
-        ws.close();
-        return;
-      }
-      const user = db.getUserById(session.userId);
-      if (!user) {
-        send(ws, { type: 'error', message: 'Пользователь не найден.' });
-        ws.close();
-        return;
-      }
-      finalizeAuth(user, ws);
-    }
-
+  wss.on('connection', (ws) => {
     ws.on('message', (data) => {
       let payload;
       try {
@@ -161,9 +128,6 @@ function attachWebSocketServer({ server, db }) {
       }
 
       if (payload.type === 'auth') {
-        if (connectionInfo.has(ws)) {
-          return;
-        }
         const { mode, nickname, password } = payload;
         if (!nickname || !password) {
           send(ws, { type: 'error', message: 'Нужен логин и пароль.' });
@@ -184,7 +148,14 @@ function attachWebSocketServer({ server, db }) {
               return;
             }
           }
-          finalizeAuth(user, ws);
+          registerConnection(user.id, ws);
+          send(ws, {
+            type: 'auth_ok',
+            user: { id: user.id, nickname: user.username },
+            rooms: listRoomsForUser(db, user.id),
+            users: listUsersWithStatus(db),
+          });
+          broadcastUsersUpdate(db);
         } catch (error) {
           send(ws, { type: 'error', message: error.message });
         }
