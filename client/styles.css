@@ -336,6 +336,60 @@ body {
   gap: 16px;
 }
 
+.voice-panel {
+  border: 1px solid #e5e9f2;
+  border-radius: 16px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: #f8faff;
+}
+
+.voice-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.voice-controls select {
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid #d6dbe6;
+  background: white;
+}
+
+.voice-status {
+  font-size: 13px;
+  color: #6b7280;
+}
+
+.mic-indicator {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #e5e7eb;
+  position: relative;
+  overflow: hidden;
+}
+
+.mic-indicator::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: #1b3cff;
+  transform: scale(var(--level, 0));
+  transform-origin: center;
+  transition: transform 0.1s linear;
+  border-radius: 50%;
+  opacity: 0.85;
+}
+
+.voice-remote {
+  display: none;
+}
+
 .chat-messages {
   min-height: 240px;
   max-height: 360px;

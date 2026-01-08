@@ -12,6 +12,16 @@ const state = {
   ws: null,
   wsStatus: 'disconnected',
   error: null,
+  voice: {
+    status: 'disconnected',
+    joined: false,
+    muted: false,
+    isSharingScreen: false,
+    devices: [],
+    activeDeviceId: '',
+    micLevel: 0,
+    peers: 0,
+  },
 };
 
 const INVITE_TTL_MS = 5 * 60 * 1000;
@@ -84,6 +94,85 @@ function connectWebSocket(authPayload) {
       console.error('WS parse error', err);
     }
   });
+}
+
+let voiceChat;
+let micLevelRaf = null;
+let latestMicLevel = 0;
+
+function queueMicLevelUpdate(level) {
+  latestMicLevel = level;
+  if (micLevelRaf) return;
+  micLevelRaf = requestAnimationFrame(() => {
+    micLevelRaf = null;
+    state.voice.micLevel = latestMicLevel;
+    const indicator = document.getElementById('mic-level');
+    if (indicator) {
+      indicator.style.setProperty('--level', state.voice.micLevel.toFixed(2));
+    }
+  });
+}
+
+function attachRemoteStream(peerId, stream) {
+  const container = document.getElementById('voice-remote');
+  if (!container) return;
+  let audio = container.querySelector(`[data-peer=\"${peerId}\"]`);
+  if (!audio) {
+    audio = document.createElement('audio');
+    audio.autoplay = true;
+    audio.dataset.peer = peerId;
+    container.appendChild(audio);
+  }
+  audio.srcObject = stream;
+}
+
+function removeRemoteStream(peerId) {
+  const container = document.getElementById('voice-remote');
+  if (!container) return;
+  if (!peerId) {
+    container.innerHTML = '';
+    return;
+  }
+  const audio = container.querySelector(`[data-peer=\"${peerId}\"]`);
+  if (audio) {
+    audio.remove();
+  }
+}
+
+function initVoiceChat() {
+  if (voiceChat) return;
+  voiceChat = new VoiceChat({
+    onStatusChange: (status) => {
+      state.voice.status = status;
+      render();
+    },
+    onPeersChange: (count) => {
+      state.voice.peers = count;
+      render();
+    },
+    onMicLevel: (level) => {
+      queueMicLevelUpdate(level);
+    },
+    onRemoteStream: (peerId, stream) => {
+      attachRemoteStream(peerId, stream);
+    },
+    onRemoteStreamRemoved: (peerId) => {
+      removeRemoteStream(peerId);
+    },
+  });
+}
+
+async function refreshVoiceDevices() {
+  if (!voiceChat) return;
+  try {
+    const devices = await voiceChat.listInputDevices();
+    state.voice.devices = devices;
+    if (!state.voice.activeDeviceId && devices.length > 0) {
+      state.voice.activeDeviceId = devices[0].deviceId;
+    }
+  } catch (error) {
+    console.error('Device list error', error);
+  }
 }
 
 function handleWsMessage(payload) {
@@ -191,10 +280,77 @@ function handleAuthSubmit(event) {
   render();
 }
 
-function handleRoomSelect(room) {
+async function handleRoomSelect(room) {
+  if (state.voice.joined && state.currentRoom?.id !== room?.id) {
+    await handleVoiceLeave();
+  }
   state.currentRoom = room;
   if (room?.id) {
     sendWs({ type: 'join_room', roomId: room.id });
+  }
+  render();
+}
+
+async function handleVoiceJoin() {
+  initVoiceChat();
+  if (!state.currentRoom?.id) {
+    setError('Сначала выберите комнату для голосового чата.');
+    return;
+  }
+  try {
+    await voiceChat.join(state.currentRoom.id, state.voice.activeDeviceId);
+    state.voice.joined = true;
+    state.voice.muted = false;
+    await refreshVoiceDevices();
+    render();
+  } catch (error) {
+    console.error(error);
+    setError('Не удалось подключиться к голосовому чату.');
+  }
+}
+
+async function handleVoiceLeave() {
+  if (!voiceChat || !state.voice.joined) return;
+  await voiceChat.leave();
+  state.voice.joined = false;
+  state.voice.muted = false;
+  state.voice.isSharingScreen = false;
+  state.voice.peers = 0;
+  render();
+}
+
+async function handleVoiceToggle() {
+  if (!voiceChat || !state.voice.joined) return;
+  const muted = await voiceChat.toggleMute();
+  state.voice.muted = muted;
+  render();
+}
+
+async function handleVoiceDeviceChange(deviceId) {
+  if (!deviceId) return;
+  state.voice.activeDeviceId = deviceId;
+  if (voiceChat && state.voice.joined) {
+    try {
+      await voiceChat.setInputDevice(deviceId);
+    } catch (error) {
+      console.error(error);
+    }
+  }
+}
+
+async function handleScreenShareToggle() {
+  if (!voiceChat || !state.voice.joined) return;
+  if (state.voice.isSharingScreen) {
+    voiceChat.stopScreenShare();
+    state.voice.isSharingScreen = false;
+  } else {
+    try {
+      await voiceChat.startScreenShare();
+      state.voice.isSharingScreen = true;
+    } catch (error) {
+      console.error(error);
+      setError('Не удалось запустить демонстрацию экрана.');
+    }
   }
   render();
 }
@@ -349,6 +505,49 @@ function renderMessages() {
     .join('');
 }
 
+function renderVoicePanel() {
+  if (!state.currentRoom?.id) return '';
+  const deviceOptions = state.voice.devices
+    .map((device) => {
+      const label = device.label || `Микрофон ${device.deviceId.slice(0, 6)}`;
+      const selected = device.deviceId === state.voice.activeDeviceId ? 'selected' : '';
+      return `<option value="${device.deviceId}" ${selected}>${label}</option>`;
+    })
+    .join('');
+
+  const joinButton = state.voice.joined
+    ? `<button class="ghost" id="voice-leave">Выйти</button>`
+    : `<button class="secondary" id="voice-join">Войти в голосовой чат</button>`;
+
+  const micButton = state.voice.joined
+    ? `<button class="secondary" id="voice-toggle-mic">${state.voice.muted ? 'Микрофон выключен' : 'Микрофон включён'}</button>`
+    : '';
+
+  const screenButton = state.voice.joined
+    ? `<button class="secondary" id="voice-share-screen">${state.voice.isSharingScreen ? 'Остановить экран' : 'Демонстрация экрана'}</button>`
+    : '';
+
+  const deviceSelect = state.voice.joined
+    ? `<select id="voice-device-select">${deviceOptions}</select>`
+    : '';
+
+  return `
+    <section class="voice-panel">
+      <div class="voice-controls">
+        ${joinButton}
+        ${micButton}
+        ${screenButton}
+        ${deviceSelect}
+        <div class="mic-indicator" id="mic-level" style="--level: ${state.voice.micLevel.toFixed(2)}"></div>
+      </div>
+      <div class="voice-status">
+        Статус: ${state.voice.status}${state.voice.joined ? ` • участников: ${state.voice.peers + 1}` : ''}
+      </div>
+      <div class="voice-remote" id="voice-remote"></div>
+    </section>
+  `;
+}
+
 function renderChat() {
   if (!state.currentRoom) {
     return `
@@ -382,6 +581,7 @@ function renderChat() {
         </div>
         <button class="secondary" id="back-to-rooms">Список каналов</button>
       </header>
+      ${renderVoicePanel()}
       <div class="chat-messages">
         ${renderMessages()}
       </div>
@@ -468,6 +668,9 @@ function bindEvents() {
   if (backButton) {
     backButton.addEventListener('click', () => {
       state.currentRoom = null;
+      if (state.voice.joined) {
+        handleVoiceLeave();
+      }
       render();
     });
   }
@@ -476,6 +679,41 @@ function bindEvents() {
   if (chatForm) {
     chatForm.addEventListener('submit', handleSendMessage);
   }
+
+  const voiceJoinButton = document.getElementById('voice-join');
+  if (voiceJoinButton) {
+    voiceJoinButton.addEventListener('click', () => {
+      handleVoiceJoin();
+    });
+  }
+
+  const voiceLeaveButton = document.getElementById('voice-leave');
+  if (voiceLeaveButton) {
+    voiceLeaveButton.addEventListener('click', () => {
+      handleVoiceLeave();
+    });
+  }
+
+  const voiceToggleButton = document.getElementById('voice-toggle-mic');
+  if (voiceToggleButton) {
+    voiceToggleButton.addEventListener('click', () => {
+      handleVoiceToggle();
+    });
+  }
+
+  const voiceShareButton = document.getElementById('voice-share-screen');
+  if (voiceShareButton) {
+    voiceShareButton.addEventListener('click', () => {
+      handleScreenShareToggle();
+    });
+  }
+
+  const deviceSelect = document.getElementById('voice-device-select');
+  if (deviceSelect) {
+    deviceSelect.addEventListener('change', () => {
+      handleVoiceDeviceChange(deviceSelect.value);
+    });
+  }
 }
 
 function render() {
@@ -483,6 +721,15 @@ function render() {
   bindEvents();
 }
 
+window.appState = state;
+window.renderApp = render;
+
 connectWebSocket();
 setInterval(sweepInvitations, INVITE_SWEEP_MS);
 render();
+
+if (navigator.mediaDevices?.addEventListener) {
+  navigator.mediaDevices.addEventListener('devicechange', () => {
+    refreshVoiceDevices();
+  });
+}
