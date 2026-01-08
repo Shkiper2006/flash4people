@@ -12,6 +12,10 @@ const state = {
   ws: null,
   wsStatus: 'disconnected',
   error: null,
+  pendingFiles: [],
+  emojiOpen: false,
+  hasAuthAttempted: false,
+  authToken: null,
   voice: {
     status: 'disconnected',
     joined: false,
@@ -26,6 +30,33 @@ const state = {
 
 const INVITE_TTL_MS = 5 * 60 * 1000;
 const INVITE_SWEEP_MS = 15 * 1000;
+const EMOJI_LIST = [
+  '🙂',
+  '😀',
+  '😁',
+  '😂',
+  '🤣',
+  '😉',
+  '😊',
+  '😍',
+  '😘',
+  '😎',
+  '😇',
+  '🤗',
+  '🤔',
+  '🤩',
+  '😜',
+  '😢',
+  '😭',
+  '😡',
+  '👍',
+  '🙏',
+  '👏',
+  '💪',
+  '🎉',
+  '🔥',
+  '❤️',
+];
 
 function formatTime(timestamp) {
   const date = new Date(timestamp);
@@ -63,7 +94,8 @@ function connectWebSocket(authPayload) {
   }
 
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-  const wsUrl = `${protocol}://${window.location.host}/ws`;
+  const tokenParam = authPayload?.token ? `?token=${encodeURIComponent(authPayload.token)}` : '';
+  const wsUrl = `${protocol}://${window.location.host}/ws${tokenParam}`;
   const ws = new WebSocket(wsUrl);
   state.ws = ws;
   state.wsStatus = 'connecting';
@@ -71,7 +103,7 @@ function connectWebSocket(authPayload) {
   ws.addEventListener('open', () => {
     state.wsStatus = 'connected';
     clearError();
-    if (authPayload) {
+    if (authPayload && authPayload.mode) {
       sendWs({ type: 'auth', ...authPayload });
     }
     render();
@@ -83,7 +115,9 @@ function connectWebSocket(authPayload) {
   });
 
   ws.addEventListener('error', () => {
-    setError('Ошибка подключения WebSocket.');
+    if (state.hasAuthAttempted) {
+      setError('Ошибка подключения WebSocket.');
+    }
   });
 
   ws.addEventListener('message', (event) => {
@@ -183,10 +217,20 @@ function handleWsMessage(payload) {
       state.rooms = payload.rooms || [];
       state.users = payload.users || [];
       state.currentRoom = payload.currentRoom || null;
+      state.messages = {};
+      state.pendingFiles = [];
+      state.emojiOpen = false;
+      state.hasAuthAttempted = false;
       clearError();
       break;
     case 'rooms_update':
       state.rooms = payload.rooms || [];
+      if (state.currentRoom) {
+        const updated = state.rooms.find((room) => room.id === state.currentRoom.id);
+        if (updated) {
+          state.currentRoom = updated;
+        }
+      }
       break;
     case 'users_update':
       state.users = payload.users || [];
@@ -197,11 +241,17 @@ function handleWsMessage(payload) {
     case 'invitation_expired':
       removeInvitation(payload.invitationId);
       break;
+    case 'invitation_response':
+      removeInvitation(payload.invite?.id || payload.invite?.invitationId);
+      break;
     case 'message':
       appendMessage(payload.roomId, payload.message);
       break;
     case 'room_joined':
       state.currentRoom = payload.room || state.rooms.find((room) => room.id === payload.roomId) || null;
+      if (payload.roomId && Array.isArray(payload.messages)) {
+        state.messages[payload.roomId] = payload.messages;
+      }
       break;
     case 'status_update':
       updateUserStatus(payload.userId, payload.status);
@@ -234,12 +284,13 @@ function updateUserStatus(userId, status) {
 
 function addInvitation(invitation) {
   if (!invitation) return;
+  const expiresAt = invitation.expiresAt ? new Date(invitation.expiresAt).getTime() : Date.now() + INVITE_TTL_MS;
   const normalized = {
     id: invitation.id || `${invitation.roomId}-${invitation.fromId || Date.now()}`,
     roomId: invitation.roomId,
     roomTitle: invitation.roomTitle || invitation.roomName,
     from: invitation.from,
-    expiresAt: Date.now() + INVITE_TTL_MS,
+    expiresAt,
   };
   state.invitations = [normalized, ...state.invitations].slice(0, 6);
 }
@@ -259,7 +310,7 @@ function sweepInvitations() {
   render();
 }
 
-function handleAuthSubmit(event) {
+async function handleAuthSubmit(event) {
   event.preventDefault();
   const form = event.target;
   const data = new FormData(form);
@@ -270,13 +321,45 @@ function handleAuthSubmit(event) {
     return;
   }
   clearError();
+  state.hasAuthAttempted = true;
   state.user = { nickname };
-  state.isAuthed = true;
-  connectWebSocket({
-    mode: state.authMode,
-    nickname,
-    password,
-  });
+  try {
+    let tokenResponse = null;
+    if (state.authMode === 'register') {
+      const registerResponse = await fetch('/api/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: nickname, password }),
+      });
+      if (!registerResponse.ok) {
+        const errorPayload = await registerResponse.json().catch(() => ({}));
+        setError(errorPayload.error || 'Не удалось создать аккаунт.');
+        return;
+      }
+      tokenResponse = await registerResponse.json().catch(() => null);
+    }
+
+    if (!tokenResponse?.token) {
+      const loginResponse = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: nickname, password }),
+      });
+      if (!loginResponse.ok) {
+        const errorPayload = await loginResponse.json().catch(() => ({}));
+        setError(errorPayload.error || 'Не удалось войти.');
+        return;
+      }
+      tokenResponse = await loginResponse.json();
+    }
+
+    state.authToken = tokenResponse.token;
+    state.user = tokenResponse.user || state.user;
+    connectWebSocket({ token: state.authToken });
+  } catch (error) {
+    console.error(error);
+    setError('Не удалось подключиться к серверу.');
+  }
   render();
 }
 
@@ -355,25 +438,100 @@ async function handleScreenShareToggle() {
   render();
 }
 
-function handleSendMessage(event) {
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+async function handleFileInputChange(event) {
+  const files = Array.from(event.target.files || []);
+  if (!files.length) return;
+  try {
+    const entries = await Promise.all(
+      files.map(async (file) => ({
+        name: file.name,
+        type: file.type || 'application/octet-stream',
+        size: file.size,
+        dataUrl: await readFileAsDataUrl(file),
+      }))
+    );
+    state.pendingFiles = [...state.pendingFiles, ...entries];
+    render();
+  } catch (error) {
+    console.error(error);
+    setError('Не удалось прочитать файл.');
+  }
+}
+
+function handleRemovePendingFile(index) {
+  state.pendingFiles = state.pendingFiles.filter((_, idx) => idx !== index);
+  render();
+}
+
+async function uploadFile(file) {
+  const response = await fetch('/upload', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: file.name,
+      type: file.type,
+      data: file.dataUrl,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error('Upload failed');
+  }
+  return response.json();
+}
+
+async function handleSendMessage(event) {
   event.preventDefault();
   const input = event.target.querySelector('input');
   if (!input) return;
   const text = input.value.trim();
-  if (!text || !state.currentRoom?.id) return;
-  const message = {
-    id: `${Date.now()}`,
-    from: state.user?.nickname || 'Вы',
-    text,
-    timestamp: Date.now(),
-  };
-  appendMessage(state.currentRoom.id, message);
-  sendWs({
-    type: 'message',
-    roomId: state.currentRoom.id,
-    message,
-  });
+  if (!state.currentRoom?.id) return;
+  if (!text && state.pendingFiles.length === 0) return;
+
+  if (text) {
+    sendWs({
+      type: 'message',
+      roomId: state.currentRoom.id,
+      message: { type: 'text', text },
+    });
+  }
+
+  if (state.pendingFiles.length > 0) {
+    try {
+      const uploaded = await Promise.all(state.pendingFiles.map(uploadFile));
+      uploaded.forEach((fileResponse, index) => {
+        const original = state.pendingFiles[index];
+        sendWs({
+          type: 'message',
+          roomId: state.currentRoom.id,
+          message: {
+            type: 'file',
+            file: {
+              id: fileResponse.id,
+              url: fileResponse.url,
+              name: original.name,
+              mime: original.type,
+              size: original.size,
+            },
+          },
+        });
+      });
+    } catch (error) {
+      console.error(error);
+      setError('Не удалось отправить файлы.');
+    }
+  }
+
   input.value = '';
+  state.pendingFiles = [];
   render();
 }
 
@@ -387,6 +545,30 @@ function handleInvitationAction(invitationId, action) {
   render();
 }
 
+function handleEmojiToggle() {
+  state.emojiOpen = !state.emojiOpen;
+  render();
+}
+
+function handleEmojiPick(emoji) {
+  const input = document.getElementById('message-input');
+  if (!input) return;
+  const value = input.value || '';
+  const start = input.selectionStart ?? value.length;
+  const end = input.selectionEnd ?? value.length;
+  input.value = `${value.slice(0, start)}${emoji}${value.slice(end)}`;
+  const cursor = start + emoji.length;
+  if (input.setSelectionRange) {
+    input.setSelectionRange(cursor, cursor);
+  }
+  input.focus();
+}
+
+function handleInviteUser(userId) {
+  if (!state.currentRoom?.id) return;
+  sendWs({ type: 'invite', roomId: state.currentRoom.id, toUserId: userId });
+}
+
 function renderAuth() {
   return `
     <section class="auth-card">
@@ -394,6 +576,7 @@ function renderAuth() {
         <h1>Flash4People</h1>
         <p>Войдите или зарегистрируйтесь, чтобы продолжить.</p>
       </div>
+      ${state.error ? `<div class="error">${state.error}</div>` : ''}
       <div class="auth-tabs">
         <button class="tab ${state.authMode === 'login' ? 'active' : ''}" data-mode="login">Вход</button>
         <button class="tab ${state.authMode === 'register' ? 'active' : ''}" data-mode="register">Регистрация</button>
@@ -467,17 +650,36 @@ function renderRoomsList() {
     .join('');
 }
 
+function renderRoomCreate() {
+  return `
+    <form class="room-create" id="room-create-form">
+      <input type="text" name="room" placeholder="Новая комната" required />
+      <button class="primary" type="submit">Создать</button>
+    </form>
+  `;
+}
+
 function renderUsersList() {
   if (!state.users.length) {
     return '<p class="muted">Нет пользователей.</p>';
   }
+  const canInvite = state.currentRoom?.ownerId === state.user?.id;
+  const currentMembers = state.currentRoom?.members || [];
   return state.users
     .map((user) => {
       const status = user.status === 'online' ? 'online' : 'offline';
+      const canInviteUser =
+        canInvite &&
+        user.id !== state.user?.id &&
+        status === 'online' &&
+        !currentMembers.includes(user.id);
       return `
         <div class="user ${status}">
-          <span class="nickname">${getUserLabel(user)}</span>
-          <span class="status">${status === 'online' ? 'онлайн' : 'оффлайн'}</span>
+          <div>
+            <span class="nickname">${getUserLabel(user)}</span>
+            <span class="status">${status === 'online' ? 'онлайн' : 'оффлайн'}</span>
+          </div>
+          ${canInviteUser ? `<button class="ghost invite-button" data-invite="${user.id}">+</button>` : ''}
         </div>
       `;
     })
@@ -492,15 +694,29 @@ function renderMessages() {
   }
   return list
     .map(
-      (message) => `
-        <div class="message">
-          <div class="message-header">
-            <span class="from">${message.from || 'Аноним'}</span>
-            <span class="time">${formatTime(message.timestamp)}</span>
+      (message) => {
+        const file = message.file;
+        const isImage = file?.mime?.startsWith('image/');
+        const fileMarkup = file
+          ? `
+            <div class="message-file">
+              <a href="${file.url}" target="_blank" rel="noopener">
+                ${isImage ? `<img src="${file.url}" alt="${file.name}" />` : file.name}
+              </a>
+            </div>
+          `
+          : '';
+        return `
+          <div class="message">
+            <div class="message-header">
+              <span class="from">${message.from || 'Аноним'}</span>
+              <span class="time">${formatTime(message.timestamp)}</span>
+            </div>
+            ${message.text ? `<p>${message.text}</p>` : ''}
+            ${fileMarkup}
           </div>
-          <p>${message.text || ''}</p>
-        </div>
-      `
+        `;
+      }
     )
     .join('');
 }
@@ -585,10 +801,32 @@ function renderChat() {
       <div class="chat-messages">
         ${renderMessages()}
       </div>
+      ${state.pendingFiles.length ? `
+        <div class="attachments">
+          ${state.pendingFiles
+            .map(
+              (file, index) => `
+              <div class="attachment">
+                <span>${file.name}</span>
+                <button class="ghost" data-remove-file="${index}">×</button>
+              </div>
+            `
+            )
+            .join('')}
+        </div>
+      ` : ''}
       <form class="chat-input" id="chat-form">
-        <input type="text" placeholder="Напишите сообщение" />
+        <input id="message-input" type="text" placeholder="Напишите сообщение" />
+        <input id="file-input" type="file" multiple hidden />
+        <button type="button" class="ghost" id="emoji-toggle">😊</button>
+        <button type="button" class="ghost" id="file-attach">📎</button>
         <button class="primary" type="submit">Отправить</button>
       </form>
+      <div class="emoji-panel ${state.emojiOpen ? 'open' : ''}" id="emoji-panel" ${
+        state.emojiOpen ? '' : 'hidden'
+      }>
+        ${EMOJI_LIST.map((emoji) => `<button type="button" data-emoji="${emoji}">${emoji}</button>`).join('')}
+      </div>
     </section>
   `;
 }
@@ -606,6 +844,7 @@ function renderAppShell() {
           <div class="rooms-list">
             ${renderRoomsList()}
           </div>
+          ${renderRoomCreate()}
         </section>
         <section>
           <h3>Пользователи</h3>
@@ -637,6 +876,7 @@ function bindEvents() {
   document.querySelectorAll('[data-mode]').forEach((button) => {
     button.addEventListener('click', () => {
       state.authMode = button.dataset.mode;
+      clearError();
       render();
     });
   });
@@ -645,6 +885,7 @@ function bindEvents() {
   if (toggleButton) {
     toggleButton.addEventListener('click', () => {
       state.authMode = state.authMode === 'login' ? 'register' : 'login';
+      clearError();
       render();
     });
   }
@@ -664,6 +905,27 @@ function bindEvents() {
     });
   });
 
+  document.querySelectorAll('[data-invite]').forEach((button) => {
+    button.addEventListener('click', () => {
+      handleInviteUser(button.dataset.invite);
+    });
+  });
+
+  document.querySelectorAll('[data-remove-file]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const index = Number(button.dataset.removeFile);
+      if (!Number.isNaN(index)) {
+        handleRemovePendingFile(index);
+      }
+    });
+  });
+
+  document.querySelectorAll('[data-emoji]').forEach((button) => {
+    button.addEventListener('click', () => {
+      handleEmojiPick(button.dataset.emoji);
+    });
+  });
+
   const backButton = document.getElementById('back-to-rooms');
   if (backButton) {
     backButton.addEventListener('click', () => {
@@ -678,6 +940,30 @@ function bindEvents() {
   const chatForm = document.getElementById('chat-form');
   if (chatForm) {
     chatForm.addEventListener('submit', handleSendMessage);
+  }
+
+  const roomCreateForm = document.getElementById('room-create-form');
+  if (roomCreateForm) {
+    roomCreateForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const data = new FormData(roomCreateForm);
+      const name = data.get('room')?.toString().trim();
+      if (!name) return;
+      sendWs({ type: 'create_room', name });
+      roomCreateForm.reset();
+    });
+  }
+
+  const fileAttachButton = document.getElementById('file-attach');
+  const fileInput = document.getElementById('file-input');
+  if (fileAttachButton && fileInput) {
+    fileAttachButton.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', handleFileInputChange);
+  }
+
+  const emojiToggle = document.getElementById('emoji-toggle');
+  if (emojiToggle) {
+    emojiToggle.addEventListener('click', handleEmojiToggle);
   }
 
   const voiceJoinButton = document.getElementById('voice-join');
@@ -723,8 +1009,6 @@ function render() {
 
 window.appState = state;
 window.renderApp = render;
-
-connectWebSocket();
 setInterval(sweepInvitations, INVITE_SWEEP_MS);
 render();
 
