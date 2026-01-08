@@ -112,7 +112,9 @@ function connectWebSocket(authPayload) {
   });
 
   ws.addEventListener('error', () => {
-    setError('Ошибка подключения WebSocket.');
+    if (state.hasAuthAttempted) {
+      setError('Ошибка подключения WebSocket.');
+    }
   });
 
   ws.addEventListener('message', (event) => {
@@ -315,6 +317,7 @@ function handleAuthSubmit(event) {
     return;
   }
   clearError();
+  state.hasAuthAttempted = true;
   state.user = { nickname };
   const authPayload = { mode: state.authMode, nickname, password };
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
@@ -838,6 +841,7 @@ function bindEvents() {
   document.querySelectorAll('[data-mode]').forEach((button) => {
     button.addEventListener('click', () => {
       state.authMode = button.dataset.mode;
+      clearError();
       render();
     });
   });
@@ -846,6 +850,7 @@ function bindEvents() {
   if (toggleButton) {
     toggleButton.addEventListener('click', () => {
       state.authMode = state.authMode === 'login' ? 'register' : 'login';
+      clearError();
       render();
     });
   }
