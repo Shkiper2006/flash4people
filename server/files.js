@@ -136,12 +136,28 @@ function attachFileRoutes({ app }) {
 
   app.get('/files/:id', (req, res) => {
     const entry = findFileEntry(req.params.id);
-    if (!entry) {
+    if (!entry || !entry.path) {
       res.status(404).json({ error: 'File not found' });
       return;
     }
-    res.type(entry.mime || 'application/octet-stream');
-    res.sendFile(path.resolve(entry.path));
+    const filePath = path.resolve(entry.path);
+    fs.access(filePath, fs.constants.R_OK, (accessError) => {
+      if (accessError) {
+        res.status(404).json({ error: 'File not found' });
+        return;
+      }
+      res.type(entry.mime || 'application/octet-stream');
+      res.sendFile(filePath, (error) => {
+        if (!error || res.headersSent) {
+          return;
+        }
+        if (error.code === 'ENOENT') {
+          res.status(404).json({ error: 'File not found' });
+          return;
+        }
+        res.status(500).json({ error: 'Failed to read file' });
+      });
+    });
   });
 }
 
