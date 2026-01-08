@@ -2,6 +2,7 @@ const express = require('express');
 const http = require('http');
 
 const Database = require('./db');
+const { attachFileRoutes } = require('./files');
 const { attachWebSocketServer } = require('./ws');
 
 const app = express();
@@ -9,6 +10,8 @@ const server = http.createServer(app);
 const db = new Database();
 
 app.use(express.json({ limit: '10mb' }));
+
+attachFileRoutes({ app });
 
 function getToken(req) {
   const header = req.headers.authorization || '';
