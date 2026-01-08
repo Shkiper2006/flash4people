@@ -53,7 +53,8 @@ app.post('/api/register', (req, res) => {
   }
   try {
     const user = db.createUser({ username, password });
-    res.status(201).json({ id: user.id, username: user.username });
+    const token = db.createSession(user.id);
+    res.status(201).json({ token, user: { id: user.id, username: user.username } });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }

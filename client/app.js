@@ -14,6 +14,8 @@ const state = {
   error: null,
   pendingFiles: [],
   emojiOpen: false,
+  hasAuthAttempted: false,
+  authToken: null,
   voice: {
     status: 'disconnected',
     joined: false,
@@ -92,7 +94,8 @@ function connectWebSocket(authPayload) {
   }
 
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-  const wsUrl = `${protocol}://${window.location.host}/ws`;
+  const tokenParam = authPayload?.token ? `?token=${encodeURIComponent(authPayload.token)}` : '';
+  const wsUrl = `${protocol}://${window.location.host}/ws${tokenParam}`;
   const ws = new WebSocket(wsUrl);
   state.ws = ws;
   state.wsStatus = 'connecting';
@@ -100,7 +103,7 @@ function connectWebSocket(authPayload) {
   ws.addEventListener('open', () => {
     state.wsStatus = 'connected';
     clearError();
-    if (authPayload) {
+    if (authPayload && authPayload.mode) {
       sendWs({ type: 'auth', ...authPayload });
     }
     render();
@@ -217,6 +220,7 @@ function handleWsMessage(payload) {
       state.messages = {};
       state.pendingFiles = [];
       state.emojiOpen = false;
+      state.hasAuthAttempted = false;
       clearError();
       break;
     case 'rooms_update':
@@ -306,7 +310,7 @@ function sweepInvitations() {
   render();
 }
 
-function handleAuthSubmit(event) {
+async function handleAuthSubmit(event) {
   event.preventDefault();
   const form = event.target;
   const data = new FormData(form);
@@ -974,8 +978,6 @@ function render() {
 
 window.appState = state;
 window.renderApp = render;
-
-connectWebSocket();
 setInterval(sweepInvitations, INVITE_SWEEP_MS);
 render();
 
