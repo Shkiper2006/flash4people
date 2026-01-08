@@ -1,5 +1,6 @@
 const express = require('express');
 const http = require('http');
+const path = require('path');
 
 const Database = require('./db');
 const { attachFileRoutes } = require('./files');
@@ -11,6 +12,7 @@ const server = http.createServer(app);
 const db = new Database();
 
 app.use(express.json({ limit: '10mb' }));
+app.use(express.static(path.join(__dirname, '..', 'client')));
 
 attachFileRoutes({ app });
 
@@ -78,7 +80,7 @@ app.post('/api/logout', authMiddleware, (req, res) => {
 });
 
 app.get('/api/rooms', authMiddleware, (req, res) => {
-  res.json({ rooms: db.listRoomsByOwner(req.user.id) });
+  res.json({ rooms: db.listRoomsForUser(req.user.id) });
 });
 
 app.post('/api/rooms', authMiddleware, (req, res) => {
@@ -93,7 +95,7 @@ app.post('/api/rooms', authMiddleware, (req, res) => {
 
 app.get('/api/rooms/:id', authMiddleware, (req, res) => {
   const room = db.getRoom(req.params.id);
-  if (!room || room.ownerId !== req.user.id) {
+  if (!room || !db.isRoomMember(room.id, req.user.id)) {
     res.status(404).json({ error: 'Room not found' });
     return;
   }
