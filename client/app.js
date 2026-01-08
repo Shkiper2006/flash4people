@@ -14,7 +14,6 @@ const state = {
   error: null,
   pendingFiles: [],
   emojiOpen: false,
-  hasAuthAttempted: false,
   voice: {
     status: 'disconnected',
     joined: false,
@@ -218,7 +217,6 @@ function handleWsMessage(payload) {
       state.messages = {};
       state.pendingFiles = [];
       state.emojiOpen = false;
-      state.hasAuthAttempted = false;
       clearError();
       break;
     case 'rooms_update':
