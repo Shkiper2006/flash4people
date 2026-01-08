@@ -94,7 +94,8 @@ function connectWebSocket(authPayload) {
   }
 
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-  const wsUrl = `${protocol}://${window.location.host}/ws`;
+  const tokenParam = authPayload?.token ? `?token=${encodeURIComponent(authPayload.token)}` : '';
+  const wsUrl = `${protocol}://${window.location.host}/ws${tokenParam}`;
   const ws = new WebSocket(wsUrl);
   state.ws = ws;
   state.wsStatus = 'connecting';
@@ -102,9 +103,7 @@ function connectWebSocket(authPayload) {
   ws.addEventListener('open', () => {
     state.wsStatus = 'connected';
     clearError();
-    if (authPayload?.token) {
-      sendWs({ type: 'auth_token', token: authPayload.token });
-    } else if (authPayload?.mode) {
+    if (authPayload && authPayload.mode) {
       sendWs({ type: 'auth', ...authPayload });
     }
     render();
@@ -324,42 +323,11 @@ async function handleAuthSubmit(event) {
   clearError();
   state.hasAuthAttempted = true;
   state.user = { nickname };
-  try {
-    let tokenResponse = null;
-    if (state.authMode === 'register') {
-      const registerResponse = await fetch('/api/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: nickname, password }),
-      });
-      if (!registerResponse.ok) {
-        const errorPayload = await registerResponse.json().catch(() => ({}));
-        setError(errorPayload.error || 'Не удалось создать аккаунт.');
-        return;
-      }
-      tokenResponse = await registerResponse.json().catch(() => null);
-    }
-
-    if (!tokenResponse?.token) {
-      const loginResponse = await fetch('/api/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: nickname, password }),
-      });
-      if (!loginResponse.ok) {
-        const errorPayload = await loginResponse.json().catch(() => ({}));
-        setError(errorPayload.error || 'Не удалось войти.');
-        return;
-      }
-      tokenResponse = await loginResponse.json();
-    }
-
-    state.authToken = tokenResponse.token;
-    state.user = tokenResponse.user || state.user;
-    connectWebSocket({ token: state.authToken });
-  } catch (error) {
-    console.error(error);
-    setError('Не удалось подключиться к серверу.');
+  const authPayload = { mode: state.authMode, nickname, password };
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
+    connectWebSocket(authPayload);
+  } else {
+    sendWs({ type: 'auth', ...authPayload });
   }
   render();
 }
