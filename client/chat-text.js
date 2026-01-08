@@ -9,17 +9,51 @@ const selectors = {
   input: '#message-input',
   fileInput: '#file-input',
   attachButton: '#attach-button',
+  emojiButton: '#emoji-button',
+  emojiPanel: '#emoji-panel',
   messages: '#messages',
 };
 
+const emojiList = [
+  '🙂',
+  '😀',
+  '😁',
+  '😂',
+  '🤣',
+  '😉',
+  '😊',
+  '😍',
+  '😘',
+  '😎',
+  '😇',
+  '🤗',
+  '🤔',
+  '🤩',
+  '😜',
+  '😢',
+  '😭',
+  '😡',
+  '👍',
+  '🙏',
+  '👏',
+  '💪',
+  '🎉',
+  '🔥',
+  '❤️',
+];
+
 function getDomElements() {
   const form = document.querySelector(selectors.form) || document.querySelector('form');
-  const input = document.querySelector(selectors.input) || form?.querySelector('input');
+  const input =
+    document.querySelector(selectors.input) ||
+    form?.querySelector('input') ||
+    form?.querySelector('textarea');
   const fileInput = document.querySelector(selectors.fileInput);
   const attachButton = document.querySelector(selectors.attachButton);
+  const emojiButton = document.querySelector(selectors.emojiButton);
+  const emojiPanel = document.querySelector(selectors.emojiPanel);
   const messagesList = document.querySelector(selectors.messages);
-  return { form, input, messagesList };
-  return { form, input, fileInput, attachButton, messagesList };
+  return { form, input, fileInput, attachButton, emojiButton, emojiPanel, messagesList };
 }
 
 function formatTime(timestamp) {
@@ -229,11 +263,65 @@ function ensureFileControls(form) {
   form.appendChild(attachButton);
 }
 
+function insertEmoji(emoji) {
+  const { input } = getDomElements();
+  const activeElement = document.activeElement;
+  const target =
+    activeElement && activeElement.matches?.('input, textarea') ? activeElement : input;
+  if (!target) return;
+  const value = target.value ?? '';
+  const start = Number.isInteger(target.selectionStart) ? target.selectionStart : value.length;
+  const end = Number.isInteger(target.selectionEnd) ? target.selectionEnd : value.length;
+  const nextValue = `${value.slice(0, start)}${emoji}${value.slice(end)}`;
+  target.value = nextValue;
+  const cursor = start + emoji.length;
+  if (target.setSelectionRange) {
+    target.setSelectionRange(cursor, cursor);
+  }
+  target.focus();
+}
+
+function ensureEmojiControls(form) {
+  if (!form || document.querySelector(selectors.emojiButton)) return;
+  const emojiButton = document.createElement('button');
+  emojiButton.type = 'button';
+  emojiButton.id = selectors.emojiButton.replace('#', '');
+  emojiButton.textContent = '🙂';
+  emojiButton.title = 'Эмодзи';
+  emojiButton.className = 'emoji-button';
+
+  const emojiPanel = document.createElement('div');
+  emojiPanel.id = selectors.emojiPanel.replace('#', '');
+  emojiPanel.className = 'emoji-panel';
+  emojiPanel.hidden = true;
+  emojiPanel.setAttribute('role', 'menu');
+
+  const emojiListContainer = document.createElement('div');
+  emojiListContainer.className = 'emoji-list';
+  emojiList.forEach((emoji) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'emoji-item';
+    button.textContent = emoji;
+    button.addEventListener('click', () => insertEmoji(emoji));
+    emojiListContainer.appendChild(button);
+  });
+
+  emojiPanel.appendChild(emojiListContainer);
+
+  emojiButton.addEventListener('click', () => {
+    emojiPanel.hidden = !emojiPanel.hidden;
+  });
+
+  form.appendChild(emojiButton);
+  form.appendChild(emojiPanel);
+}
+
 function bindEvents() {
   const { form } = getDomElements();
-  const { form, fileInput } = getDomElements();
   if (form) {
     ensureFileControls(form);
+    ensureEmojiControls(form);
     form.addEventListener('submit', handleFormSubmit);
     form.addEventListener('drop', handleDrop);
     form.addEventListener('dragover', handleDragOver);
