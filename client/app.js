@@ -538,6 +538,7 @@ function renderAuth() {
         <h1>Flash4People</h1>
         <p>Войдите или зарегистрируйтесь, чтобы продолжить.</p>
       </div>
+      ${state.error ? `<div class="error">${state.error}</div>` : ''}
       <div class="auth-tabs">
         <button class="tab ${state.authMode === 'login' ? 'active' : ''}" data-mode="login">Вход</button>
         <button class="tab ${state.authMode === 'register' ? 'active' : ''}" data-mode="register">Регистрация</button>
